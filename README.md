@@ -15,6 +15,7 @@
 ### 版本选用
 
 如果你的客户端/服务器有[DH]Distant Horizons，那么请使用DHFIX版本，如果没有，请使用All版本，由于本模组和[DH]Distant Horizons使用了相同的依赖库，在加载时会导致崩溃。
+本模组经过测试还支持Velocity端，使用Velocity端请搭配独立服务端代理程序，独立服务端代理程序可参考下面的-独立服务端/客户端（跨平台）。
 
 ### 客户端（Forge 模组，本模组为客户端服务端通用模组）
 
@@ -32,7 +33,7 @@
 | --- | --- |
 | `enabled=false` | 是否启用内置 zstd 服务端代理 |
 | `listen=0.0.0.0:9000` | zstd 客户端连接的公共监听地址 |
-| `target=127.0.0.1:25565` | 后端 Minecraft/Velocity 目标地址 |
+| `target=127.0.0.1:25565` | 后端 Minecraft目标地址 |
 | `level=7` | 后端到客户端方向的 zstd 压缩级别 |
 | `max_conn_per_ip=20` | 每个源 IP 最大并发连接数 |
 | `max_req_per_window=30` | 每个源 IP 在窗口期内最大请求次数 |
