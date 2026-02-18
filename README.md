@@ -39,7 +39,7 @@
 | `max_req_per_window=30` | 每个源 IP 在窗口期内最大请求次数 |
 | `ban_duration=30m` | 超限后封禁时长 |
 | `stats_interval=1s` | 统计日志输出间隔 |
-
+注:如果窗口期和连接数设置不当,在客户端大量刷新MOTD的情况下有可能会被封
 ## 项目组成
 
 - `projects/zstdproxy-forge`  
