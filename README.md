@@ -12,7 +12,9 @@
 
 ## 第一次使用
 
-版本选用:如果你的客户端/服务器有[DH]Distant Horizons，那么请使用DHFIX版本，如果没有，请使用All版本，由于本模组和[DH]Distant Horizons使用了相同的依赖库，在加载时会导致崩溃。
+### 版本选用
+
+如果你的客户端/服务器有[DH]Distant Horizons，那么请使用DHFIX版本，如果没有，请使用All版本，由于本模组和[DH]Distant Horizons使用了相同的依赖库，在加载时会导致崩溃。
 
 ### 客户端（Forge 模组，本模组为客户端服务端通用模组）
 
