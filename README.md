@@ -107,6 +107,33 @@ cd projects\gozstdserver
 go build .
 ```
 
+## 独立服务端（跨平台）
+
+以下命令适用于独立程序（`GoZstdServer*`）。
+独立服务端程序往往是和客户端的jar一起使用，服务器使用独立程序，客户端使用jar mod，这样可以自动生成服务器地址。
+
+#### Windows
+
+```powershell
+cd C:\Users\Administrator\Desktop\zstd
+.\GoZstdServer.exe -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
+```
+
+#### Linux (amd64)
+
+```bash
+cd /path/to/zstd
+chmod +x ./GoZstdServer-linux-amd64
+./GoZstdServer-linux-amd64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
+```
+
+#### macOS (Apple Silicon)
+
+```bash
+cd /path/to/zstd
+chmod +x ./GoZstdServer-macos-arm64
+./GoZstdServer-macos-arm64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -level 3
+```
 
 ### 第三方依赖说明
 
@@ -118,4 +145,5 @@ go build .
 ## 许可证
 
 该项目采用MIT许可证授权。详情请参见LICENSE。
+
 
