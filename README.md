@@ -111,6 +111,7 @@ go build .
 
 以下命令适用于独立程序（`GoZstdServer*`）。
 独立服务端程序往往是和客户端的jar一起使用，服务器使用独立程序，客户端使用jar mod，这样可以自动生成服务器地址。
+由于这个工具的特性，它不仅可以代理MC，也可以代理使用tcp协议的其他游戏服务器。
 
 #### Windows
 
@@ -125,6 +126,14 @@ cd C:\Users\Administrator\Desktop\zstd
 cd /path/to/zstd
 chmod +x ./GoZstdServer-linux-amd64
 ./GoZstdServer-linux-amd64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
+```
+
+#### Linux (arm64)
+
+```bash
+cd /path/to/zstd
+chmod +x ./GoZstdServer-linux-arm64
+./GoZstdServer-linux-arm64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
 ```
 
 #### macOS (Apple Silicon)
@@ -145,5 +154,6 @@ chmod +x ./GoZstdServer-macos-arm64
 ## 许可证
 
 该项目采用MIT许可证授权。详情请参见LICENSE。
+
 
 
