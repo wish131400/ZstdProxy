@@ -12,13 +12,15 @@
 
 ## 第一次使用
 
-### 客户端（Forge 模组）
+版本选用:如果你的客户端/服务器有[DH]Distant Horizons，那么请使用DHFIX版本，如果没有，请使用All版本，由于本模组和[DH]Distant Horizons使用了相同的依赖库，在加载时会导致崩溃。
+
+### 客户端（Forge 模组，本模组为客户端服务端通用模组）
 
 首次启动游戏后，会在整合包根目录自动生成 `servers.zstd.json`。
 
 你需要手动填写 zstd 代理地址（不是 MC 服务端直连地址），保存后等待 `2~5` 秒，在游戏多人列表点击刷新即可看到配置的 zstd 线路。
 
-### 服务端（Forge 内置代理）
+### 服务端（Forge 模组，本模组为客户端服务端通用模组）
 
 首次启动后，会在 `config` 目录生成 `zstdproxy-server.properties`。
 
