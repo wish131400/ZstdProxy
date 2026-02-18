@@ -124,7 +124,7 @@ go build .
 
 ```powershell
 cd C:\Users\Administrator\Desktop\zstd
-.\GoZstdServer.exe -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
+.\GoZstdServer.exe -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -L 3
 ```
 
 #### Linux (amd64)
@@ -132,7 +132,7 @@ cd C:\Users\Administrator\Desktop\zstd
 ```bash
 cd /path/to/zstd
 chmod +x ./GoZstdServer-linux-amd64
-./GoZstdServer-linux-amd64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
+./GoZstdServer-linux-amd64 -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -L 3
 ```
 
 #### Linux (arm64)
@@ -140,7 +140,7 @@ chmod +x ./GoZstdServer-linux-amd64
 ```bash
 cd /path/to/zstd
 chmod +x ./GoZstdServer-linux-arm64
-./GoZstdServer-linux-arm64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -L 3
+./GoZstdServer-linux-arm64 -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -L 3
 ```
 
 #### macOS (Apple Silicon)
@@ -148,7 +148,7 @@ chmod +x ./GoZstdServer-linux-arm64
 ```bash
 cd /path/to/zstd
 chmod +x ./GoZstdServer-macos-arm64
-./GoZstdServer-macos-arm64 -mode server -l 0.0.0.0:6006 -r 127.0.0.1:25565 -level 3
+./GoZstdServer-macos-arm64 -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -level 3
 ```
 
 ### 第三方依赖说明
