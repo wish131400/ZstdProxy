@@ -1,34 +1,63 @@
 ﻿# zstdproxyMC
 
-基于 Zstd 的 Minecraft TCP 代理项目集合，目标是尽量以低侵入方式给客户端与服务端链路增加可选压缩能力。
+基于 Zstd 的 Minecraft TCP 代理项目集合，目标是在低侵入前提下显著降低服务器带宽占用。
+本仓库是基于https://github.com/MeguminKato/ZstdProxy修改而来，目前本仓库仅有forge1.20.1版本
+
+## 压缩效果
+
+根据实测，在齿轮盛宴整合包（`www.齿轮盛宴.com`）这类机械动力为主的科技整合包场景中，压缩率通常可达到 `70%~90%`。
+
+- 视频演示：<https://www.bilibili.com/video/BV1D4Z9B2EL3/?vd_source=9ea20aff4b6c678542669bfb7d5bb4e5>
+
+## 第一次使用
+
+### 客户端（Forge 模组）
+
+首次启动游戏后，会在整合包根目录自动生成 `servers.zstd.json`。
+
+你需要手动填写 zstd 代理地址（不是 MC 服务端直连地址），保存后等待 `2~5` 秒，在游戏多人列表点击刷新即可看到配置中的 zstd 线路。
+
+### 服务端（Forge 内置代理）
+
+首次启动后，会在 `config` 目录生成 `zstdproxy-server.properties`。
+
+常用配置项如下：
+
+| 配置项 | 含义 |
+| --- | --- |
+| `enabled=false` | 是否启用内置 zstd 服务端代理 |
+| `listen=0.0.0.0:9000` | zstd 客户端连接的公共监听地址 |
+| `target=127.0.0.1:25565` | 后端 Minecraft/Velocity 目标地址 |
+| `level=7` | 后端到客户端方向的 zstd 压缩级别 |
+| `max_conn_per_ip=20` | 每个源 IP 最大并发连接数 |
+| `max_req_per_window=30` | 每个源 IP 在窗口期内最大请求次数 |
+| `ban_duration=30m` | 超限后封禁时长 |
+| `stats_interval=1s` | 统计日志输出间隔 |
 
 ## 项目组成
 
-- `projects/zstdproxy-forge`
-  Forge 1.20.1 模组（客户端 + 服务端）。
-  客户端读取 `servers.zstd.json` 并自动生成 `[zstd]` 服务器入口；服务端可作为内置 zstd 代理入口。
-
-- `projects/zstd-server-jar`
+- `projects/zstdproxy-forge`  
+  Forge 1.20.1 模组（客户端 + 服务端）。客户端读取 `servers.zstd.json` 并生成 `[zstd]` 服务器入口；服务端可作为内置 zstd 代理入口。
+- `projects/zstd-server-jar`  
   独立 Java 服务端代理（可执行 jar），不依赖 Forge 运行。
-
-- `projects/gozstdserver`
-  独立 Go 服务端代理实现它有完整的 zstd 压缩解压实现，可独立运行。
+- `projects/gozstdserver`  
+  独立 Go 服务端代理实现，包含完整 zstd 压缩/解压流程，可单独运行。
 
 ## 工作原理
 
 ### 1. 客户端侧（Forge 模组）
 
 - 启动后读取 `servers.zstd.json`（或配置 URL）
-- 为每条线路在本地起一个 loopback 代理端口（`127.0.0.1:随机端口`）
-- 将游戏多人列表中的条目替换/追加为本地地址
-- 游戏连本地端口后：
-  - 客户端 -> 远端：使用 zstd 压缩后发送
-  - 远端 -> 客户端：对 zstd 流解压后回灌给 Minecraft
+- 为每条线路启动本地 loopback 代理端口（`127.0.0.1:随机端口`）
+- 将多人列表中的线路替换/追加为本地地址
+- 游戏连接本地端口后：
+  - 客户端 -> 远端：zstd 压缩
+  - 远端 -> 客户端：zstd 解压并回灌给 Minecraft
 
 ### 2. 服务端侧（Forge 内置代理 / 独立代理）
 
 - 监听公网入口端口 `listen`
-- 将流量转发到后端实际 MC/Velocity 端口 `target`
+- 将流量转发到后端 MC/Velocity 端口 `target`
 - 转发方向：
   - 客户端 -> 后端：zstd 解压
   - 后端 -> 客户端：zstd 压缩
@@ -46,14 +75,14 @@
 
 建议：
 
-- `listen` 与 `target` 必须不同端口
-- zstd 入口端口仅给安装 zstd 客户端的玩家使用
-- 非 zstd 探针/普通客户端打到 zstd 端口会出现 `Unknown frame descriptor`
+- `listen` 与 `target` 必须是不同端口/端点
+- zstd 入口端口仅开放给安装 zstd 客户端模组的玩家
+- 非 zstd 客户端探测该端口时，日志出现 `Unknown frame descriptor` 属正常
 
 ## 注意事项
 
-- 请勿使用MC正版验证，正版验证会导致无法正常加密
-- 如果您打开了正版验证 `Ratio` 接近 `100%` 甚至略高是常见现象，不代表代理未工作
+- 在线模式（正版验证）下，登录后链路会加密，压缩收益通常偏低
+- 此时 `Ratio` 接近 `100%` 甚至略高属于常见现象，不代表代理未工作
 
 ## 构建
 
@@ -82,10 +111,10 @@ go build .
 
 ### 本仓库协议（建议）
 
-建议为本仓库采用 **MIT License**（宽松、易分发、适合整合包二次发布场景）。
+建议采用 **MIT License**（宽松、易分发，适合整合包二次发布场景）。
 
 ### 第三方依赖说明
 
-本项目依赖多个第三方组件（如 Forge、zstd-jni 等），使用与分发时需要遵守其各自许可证条款。
+本项目依赖多个第三方组件（如 Forge、`zstd-jni` 等），使用与分发时需遵守其各自许可证条款。
 
-> 注意：本仓库协议只覆盖本仓库自有代码，不替代第三方依赖许可证。
+> 本仓库协议仅覆盖本仓库自有代码，不替代第三方依赖许可证。
