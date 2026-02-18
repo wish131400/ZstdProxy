@@ -1,7 +1,7 @@
 ﻿# zstdproxyMC
 
 基于 Zstd 的 Minecraft TCP 代理项目集合，目标是在低侵入前提下显著降低服务器带宽占用。
-本仓库是基于 https://github.com/MeguminKato/ZstdProxy 修改而来，目前本仓库仅有forge1.20.1版本，如果需要，可以考虑移植到其他版本。
+本仓库是基于noforge1.21.1的zstdproxy https://github.com/MeguminKato/ZstdProxy 修改而来，目前本仓库仅有forge1.20.1版本，如果需要，可以考虑移植到其他版本。
 
 ## 压缩效果
 
