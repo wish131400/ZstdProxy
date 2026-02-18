@@ -1,0 +1,60 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'cn.tohsaka.factory'
+version = '1.0.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.github.luben:zstd-jni:1.5.5-10'
+}
+
+application {
+    mainClass = 'cn.tohsaka.factory.zstdserver.Main'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Main-Class': application.mainClass.get()
+        )
+    }
+}
+
+tasks.register('fatJar', Jar) {
+    group = 'build'
+    description = 'Builds an executable uber jar.'
+    archiveClassifier = 'all'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    manifest {
+        attributes(
+            'Main-Class': application.mainClass.get()
+        )
+    }
+
+    from sourceSets.main.output
+    dependsOn configurations.runtimeClasspath
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('fatJar')
+}
