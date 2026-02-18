@@ -15,7 +15,7 @@
 
 首次启动游戏后，会在整合包根目录自动生成 `servers.zstd.json`。
 
-你需要手动填写 zstd 代理地址（不是 MC 服务端直连地址），保存后等待 `2~5` 秒，在游戏多人列表点击刷新即可看到配置中的 zstd 线路。
+你需要手动填写 zstd 代理地址（不是 MC 服务端直连地址），保存后等待 `2~5` 秒，在游戏多人列表点击刷新即可看到配置的 zstd 线路。
 
 ### 服务端（Forge 内置代理）
 
@@ -115,7 +115,7 @@ go build .
 > 本仓库协议仅覆盖本仓库自有代码，不替代第三方依赖许可证。
 
 
-## License
+## 许可证
 
-This project is licensed under the MIT License. See LICENSE for details.
+该项目采用MIT许可证授权。详情请参见LICENSE。
 
