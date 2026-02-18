@@ -72,7 +72,7 @@
 
 ### 3. 数据流示意
 
-`Minecraft Client -> (zstdproxy client) -> Zstd Tunnel -> (zstdproxy server) -> Backend MC/Velocity`
+`MC客户端(zstdproxy) <-> FRP/HaProxy Server(可能存在) <-> FRP Client(可能存在) <-> GoZstdServer <-> MC服务端`
 
 ## 关键配置
 
