@@ -4,7 +4,7 @@ Source-maintainable Forge 1.20.1 project for zstdproxy.
 
 ## What this project does
 - Loads server definitions from `servers.zstd.json` in gameDir.
-- Starts local loopback zstd proxies using `github.luben:zstd-jni:1.5.5-10`.
+- Starts local loopback zstd proxies using `github.luben:zstd-jni:1.5.7-7`.
 - Publishes generated local addresses into multiplayer server list with suffix `[zstd]`.
 - On dedicated server, can run an embedded zstd forwarder from `config/zstdproxy-server.properties`.
 

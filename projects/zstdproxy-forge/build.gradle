@@ -44,8 +44,8 @@ repositories {
 
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
-    implementation 'com.github.luben:zstd-jni:1.5.5-10'
-    jarJar 'com.github.luben:zstd-jni:[1.5.5-10,1.5.5-10]'
+    implementation 'com.github.luben:zstd-jni:1.5.7-7'
+    jarJar 'com.github.luben:zstd-jni:[1.5.7-7,1.5.7-7]'
 }
 
 tasks.withType(JavaCompile).configureEach {
