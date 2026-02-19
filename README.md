@@ -1,7 +1,7 @@
 ﻿# zstdproxyMC
 
 基于 Zstd 的 Minecraft TCP 代理项目集合，目标是在不修改MC本体的前提下显著降低服务器带宽占用。
-本仓库是基于noforge1.21.1的zstdproxy https://github.com/MeguminKato/ZstdProxy 修改而来，目前本仓库仅有forge1.20.1版本，如果需要，可以考虑移植到其他版本。
+本仓库是重构 noforge1.21.1的zstdproxy https://github.com/MeguminKato/ZstdProxy 而来。
 
 ## 压缩效果
 
@@ -95,66 +95,7 @@
 - 在线模式（正版验证）下，登录后链路会加密，压缩收益通常偏低
 - 此时 `Ratio` 接近 `100%` 甚至略高属于常见现象，不代表代理未工作
 
-## 构建
 
-### Forge 模组
-
-```powershell
-cd projects\zstdproxy-forge
-.\gradlew.bat build
-```
-
-### Java 独立服务端
-
-```powershell
-cd projects\zstd-server-jar
-gradle build
-```
-
-### Go 独立服务端
-
-```powershell
-cd projects\gozstdserver
-go build .
-```
-
-## 独立服务端/客户端（跨平台）
-
-由于这个项目独立端并非我创建，我仅补全了macos版本，所以后续更新非特殊说明，否则默认只更新jar mod。
-以下命令适用于独立程序（`GoZstdServer*`）。
-独立服务端程序往往是和客户端的jar一起使用，服务器使用独立程序，客户端使用jar mod，这样可以自动生成服务器地址。
-由于这个工具的特性，它不仅可以代理MC，也可以代理使用tcp协议的其他游戏服务器。
-
-#### Windows
-
-```powershell
-cd C:\Users\Administrator\Desktop\zstd
-.\GoZstdServer.exe -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -L 3
-```
-
-#### Linux (amd64)
-
-```bash
-cd /path/to/zstd
-chmod +x ./GoZstdServer-linux-amd64
-./GoZstdServer-linux-amd64 -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -L 3
-```
-
-#### Linux (arm64)
-
-```bash
-cd /path/to/zstd
-chmod +x ./GoZstdServer-linux-arm64
-./GoZstdServer-linux-arm64 -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -L 3
-```
-
-#### macOS (Apple Silicon)
-
-```bash
-cd /path/to/zstd
-chmod +x ./GoZstdServer-macos-arm64
-./GoZstdServer-macos-arm64 -mode server -l 0.0.0.0:9000 -r 127.0.0.1:25565 -level 3
-```
 
 ### 第三方依赖说明
 
