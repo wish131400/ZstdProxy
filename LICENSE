@@ -1,87 +1,21 @@
-﻿Regional Dual License Agreement
-Copyright (c) 2026 MeguminKato
-All rights reserved.
+﻿MIT License
 
-1. Definitions
+Copyright (c) [2026] [wish131400]
 
-"Software" means the source code, binary files, and any related materials.
-"China Region" means the People's Republic of China (excluding Taiwan).
-"User" means any individual or legal entity using the Software.
-"Commercial Service" includes but is not limited to SaaS, hosting,
-managed services, API services, paid deployment,
-subscription-based services, or any revenue-generating offering.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-2. License Grant – Outside China Region
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-For Users whose principal residence, place of incorporation,
-or primary place of business is located outside the China Region:
-
-The Author grants a worldwide, royalty-free, non-exclusive license to:
-
-- Use the Software for any purpose;
-- Modify and create derivative works;
-- Distribute source code or binaries;
-- Provide Commercial Services;
-- Publish demonstrations, tutorials, reviews, or video content;
-- Sublicense or sell copies of the Software.
-
-3. Restrictions – China Region
-
-For Users whose principal residence, place of incorporation,
-or primary place of business is located within the China Region:
-
-The following activities are strictly prohibited:
-
-3.1 No Modification
-Users may not modify, adapt, translate, reverse engineer,
-decompile, disassemble, or create derivative works
-based on the Software.
-
-3.2 No Redistribution
-Users may not distribute, transfer, sublicense,
-publish, mirror, sell, or otherwise provide
-the Software or any part thereof to any third party.
-
-3.3 No Commercial Services
-Users may not provide the Software,
-in whole or in part,
-as part of any Commercial Service,
-including but not limited to SaaS,
-hosting, managed services, API services,
-deployment services, or any revenue-generating offering.
-
-3.4 No Public Display or Video Promotion
-Users may not record, capture, publish,
-livestream, demonstrate, or otherwise
-publicly display the Software,
-its interface, features, or output
-without prior written permission from the Author.
-
-4. Territorial Determination
-
-The applicable region shall be determined
-by the User's principal residence,
-place of incorporation, or primary place of business.
-If any substantial operation, revenue generation,
-or service targeting occurs within the China Region,
-this shall be deemed use within the China Region.
-
-5. Automatic Termination
-
-Any violation of Section 3
-shall automatically terminate all rights
-granted under this Agreement
-for the violating User.
-
-6. No Warranty
-
-The Software is provided "AS IS",
-without warranty of any kind,
-express or implied.
-The Author shall not be liable
-for any damages arising from use of the Software.
-
-7. Governing Law
-
-This Agreement shall be governed by
-the laws of Ameria
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
