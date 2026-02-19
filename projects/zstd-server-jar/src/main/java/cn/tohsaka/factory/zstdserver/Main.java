@@ -85,7 +85,7 @@ public final class Main {
             System.out.printf("tuning: flush=%s rate_per_conn=%dB/s rate_global=%dB/s burst=%dB%n",
                 cfg.flushInterval, cfg.maxRatePerConnBps, cfg.maxRateGlobalBps, cfg.burstBytes);
 
-            startStatsPrinter(stats, ticker, cfg.statsInterval);
+            startStatsPrinter(stats, ticker, cfg.statsInterval, guard);
 
             while (true) {
                 Socket client;
@@ -311,12 +311,19 @@ public final class Main {
         return ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
     }
 
-    private static void startStatsPrinter(TrafficStats stats, ScheduledExecutorService ticker, Duration interval) {
+    private static void startStatsPrinter(
+        TrafficStats stats,
+        ScheduledExecutorService ticker,
+        Duration interval,
+        FloodGuard guard
+    ) {
         long periodMs = Math.max(250L, interval.toMillis());
         AtomicLong prevRaw = new AtomicLong();
         AtomicLong prevZstd = new AtomicLong();
 
         ticker.scheduleAtFixedRate(() -> {
+            guard.sweepExpired();
+
             long raw = stats.rawBytes.get();
             long zstd = stats.zstdBytes.get();
             int conns = stats.activeConn.get();
@@ -761,16 +768,13 @@ public final class Main {
         private synchronized boolean begin(String ip) {
             long now = System.currentTimeMillis();
             GuardEntry e = state.computeIfAbsent(ip, k -> new GuardEntry());
+            pruneRequests(e, now);
 
             if (e.bannedUntilMs > now) {
                 return false;
             }
 
             if (cfg.maxReqPerWindow > 0 && !cfg.window.isZero() && !cfg.window.isNegative()) {
-                long cutoff = now - cfg.window.toMillis();
-                while (!e.requestsMs.isEmpty() && e.requestsMs.peekFirst() < cutoff) {
-                    e.requestsMs.removeFirst();
-                }
                 e.requestsMs.addLast(now);
                 if (e.requestsMs.size() > cfg.maxReqPerWindow) {
                     e.bannedUntilMs = now + cfg.banDuration.toMillis();
@@ -796,9 +800,34 @@ public final class Main {
             }
 
             long now = System.currentTimeMillis();
-            if (e.activeConn == 0 && e.requestsMs.isEmpty() && e.bannedUntilMs <= now) {
+            pruneRequests(e, now);
+            if (isRemovable(e, now)) {
                 state.remove(ip);
             }
+        }
+
+        private synchronized void sweepExpired() {
+            long now = System.currentTimeMillis();
+            state.entrySet().removeIf(entry -> {
+                GuardEntry guardEntry = entry.getValue();
+                pruneRequests(guardEntry, now);
+                return isRemovable(guardEntry, now);
+            });
+        }
+
+        private void pruneRequests(GuardEntry e, long now) {
+            if (cfg.window.isZero() || cfg.window.isNegative()) {
+                e.requestsMs.clear();
+                return;
+            }
+            long cutoff = now - cfg.window.toMillis();
+            while (!e.requestsMs.isEmpty() && e.requestsMs.peekFirst() < cutoff) {
+                e.requestsMs.removeFirst();
+            }
+        }
+
+        private boolean isRemovable(GuardEntry e, long now) {
+            return e.activeConn == 0 && e.requestsMs.isEmpty() && e.bannedUntilMs <= now;
         }
 
         private static final class GuardEntry {

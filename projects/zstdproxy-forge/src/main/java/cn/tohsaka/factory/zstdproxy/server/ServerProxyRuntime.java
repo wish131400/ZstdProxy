@@ -356,6 +356,11 @@ final class ServerProxyRuntime {
         AtomicLong prevZstd = new AtomicLong();
 
         statsTicker.scheduleAtFixedRate(() -> {
+            FloodGuard currentGuard = guard;
+            if (currentGuard != null) {
+                currentGuard.sweepExpired();
+            }
+
             long raw = stats.rawBytes.get();
             long zstd = stats.zstdBytes.get();
             int conns = stats.activeConn.get();
@@ -722,16 +727,13 @@ final class ServerProxyRuntime {
         private synchronized boolean begin(String ip) {
             long now = System.currentTimeMillis();
             GuardEntry entry = state.computeIfAbsent(ip, k -> new GuardEntry());
+            pruneRequests(entry, now);
 
             if (entry.bannedUntilMs > now) {
                 return false;
             }
 
             if (cfg.maxReqPerWindow > 0 && !cfg.window.isZero() && !cfg.window.isNegative()) {
-                long cutoff = now - cfg.window.toMillis();
-                while (!entry.requestsMs.isEmpty() && entry.requestsMs.peekFirst() < cutoff) {
-                    entry.requestsMs.removeFirst();
-                }
                 entry.requestsMs.addLast(now);
                 if (entry.requestsMs.size() > cfg.maxReqPerWindow) {
                     entry.bannedUntilMs = now + cfg.banDuration.toMillis();
@@ -756,9 +758,34 @@ final class ServerProxyRuntime {
                 entry.activeConn--;
             }
             long now = System.currentTimeMillis();
-            if (entry.activeConn == 0 && entry.requestsMs.isEmpty() && entry.bannedUntilMs <= now) {
+            pruneRequests(entry, now);
+            if (isRemovable(entry, now)) {
                 state.remove(ip);
             }
+        }
+
+        private synchronized void sweepExpired() {
+            long now = System.currentTimeMillis();
+            state.entrySet().removeIf(e -> {
+                GuardEntry entry = e.getValue();
+                pruneRequests(entry, now);
+                return isRemovable(entry, now);
+            });
+        }
+
+        private void pruneRequests(GuardEntry entry, long now) {
+            if (cfg.window.isZero() || cfg.window.isNegative()) {
+                entry.requestsMs.clear();
+                return;
+            }
+            long cutoff = now - cfg.window.toMillis();
+            while (!entry.requestsMs.isEmpty() && entry.requestsMs.peekFirst() < cutoff) {
+                entry.requestsMs.removeFirst();
+            }
+        }
+
+        private boolean isRemovable(GuardEntry entry, long now) {
+            return entry.activeConn == 0 && entry.requestsMs.isEmpty() && entry.bannedUntilMs <= now;
         }
 
         private static final class GuardEntry {
