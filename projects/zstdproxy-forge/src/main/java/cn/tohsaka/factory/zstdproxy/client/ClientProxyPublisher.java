@@ -37,6 +37,7 @@ public final class ClientProxyPublisher {
     private static final Gson GSON = new Gson();
     private static final ClientProxyPublisher INSTANCE = new ClientProxyPublisher();
 
+    private final HttpClient httpClient = HttpClient.newHttpClient();
     private final Map<String, LocalZstdProxy.ProxyHandle> runningProxies = new ConcurrentHashMap<>();
     private final Map<String, Integer> proxyPortMap = new ConcurrentHashMap<>();
     private final List<ZstdServerList.ZstdServer> activeServers = new ArrayList<>();
@@ -119,7 +120,14 @@ public final class ClientProxyPublisher {
             try {
                 LocalZstdProxy.HostPort hostPort = LocalZstdProxy.HostPort.parse(server.addr());
                 LocalZstdProxy.ProxyHandle proxy = LocalZstdProxy.start(hostPort.host(), hostPort.port(), level);
-                runningProxies.put(server.mask(), proxy);
+                LocalZstdProxy.ProxyHandle previous = runningProxies.put(server.mask(), proxy);
+                if (previous != null) {
+                    try {
+                        previous.close();
+                    } catch (Exception ignored) {
+                    }
+                    LOGGER.warn("zstdproxy: duplicate mask '{}' found, replaced old local proxy", server.mask());
+                }
                 proxyPortMap.put(server.mask(), proxy.localPort());
                 LOGGER.info("zstd server {} ({}) -> 127.0.0.1:{}", safe(server.name()), server.mask(), proxy.localPort());
             } catch (Exception e) {
@@ -150,9 +158,8 @@ public final class ClientProxyPublisher {
         String url = ClientConfig.getUrl();
         if (!blank(url) && (url.startsWith("http://") || url.startsWith("https://"))) {
             try {
-                HttpClient client = HttpClient.newHttpClient();
                 HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).build();
-                String body = client.send(request, HttpResponse.BodyHandlers.ofString()).body();
+                String body = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
                 LOGGER.debug("zstdproxy: loaded server list from url {}", url);
                 return body;
             } catch (Exception e) {
