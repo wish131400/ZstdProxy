@@ -55,6 +55,7 @@ final class ServerProxyRuntime {
     private FloodGuard guard;
     private TrafficStats stats;
     private ProxyConfig cfg;
+    private TokenBucketLimiter globalLimiter;
 
     void start(int mcServerPort) {
         synchronized (lifecycleLock) {
@@ -88,6 +89,7 @@ final class ServerProxyRuntime {
             this.guard = new FloodGuard(loaded);
             this.workers = Executors.newCachedThreadPool(new NamedFactory("zstdsrv-worker"));
             this.statsTicker = Executors.newSingleThreadScheduledExecutor(new NamedFactory("zstdsrv-stats"));
+            this.globalLimiter = TokenBucketLimiter.create(loaded.maxRateGlobalBps, loaded.burstBytes);
             this.running = true;
 
             startStatsPrinter();
@@ -98,6 +100,8 @@ final class ServerProxyRuntime {
             LOGGER.info("GoZstdServer started: listen={} target={} mode=server", loaded.listen, loaded.target);
             LOGGER.info("guard: max_conn={} max_req={} window={} ban={}",
                 loaded.maxConnPerIp, loaded.maxReqPerWindow, loaded.window, loaded.banDuration);
+            LOGGER.info("tuning: flush={} rate_per_conn={}B/s rate_global={}B/s burst={}B",
+                loaded.flushInterval, loaded.maxRatePerConnBps, loaded.maxRateGlobalBps, loaded.burstBytes);
         }
     }
 
@@ -124,6 +128,7 @@ final class ServerProxyRuntime {
             guard = null;
             stats = null;
             cfg = null;
+            globalLimiter = null;
             LOGGER.info("[zstdproxy-server] stopped");
         }
     }
@@ -172,6 +177,7 @@ final class ServerProxyRuntime {
 
                 upstream.setTcpNoDelay(true);
                 clientSocket.setTcpNoDelay(true);
+                TokenBucketLimiter perConnLimiter = TokenBucketLimiter.create(cfg.maxRatePerConnBps, cfg.burstBytes);
 
                 Future<Exception> c2s = workers.submit(() -> {
                     try {
@@ -186,7 +192,7 @@ final class ServerProxyRuntime {
 
                 Future<Exception> s2c = workers.submit(() -> {
                     try {
-                        forwardCompress(clientSocket.getOutputStream(), upstream, cfg.level, stats);
+                        forwardCompress(clientSocket.getOutputStream(), upstream, cfg.level, cfg.flushInterval, stats, perConnLimiter, globalLimiter);
                         return null;
                     } catch (Exception ex) {
                         return ex;
@@ -229,19 +235,34 @@ final class ServerProxyRuntime {
         }
     }
 
-    private void forwardCompress(OutputStream dst, Socket src, int level, TrafficStats stats) throws IOException {
-        try (ZstdOutputStream zstdOut = new ZstdOutputStream(new CountingOutputStream(dst, stats::addZstd), level)) {
+    private void forwardCompress(
+        OutputStream dst,
+        Socket src,
+        int level,
+        Duration flushInterval,
+        TrafficStats stats,
+        TokenBucketLimiter perConnLimiter,
+        TokenBucketLimiter globalLimiter
+    ) throws IOException {
+        OutputStream limitedDst = new RateLimitedOutputStream(dst, perConnLimiter, globalLimiter);
+        try (ZstdOutputStream zstdOut = new ZstdOutputStream(new CountingOutputStream(limitedDst, stats::addZstd), level)) {
             zstdOut.setCloseFrameOnFlush(false);
             InputStream srcIn = src.getInputStream();
             byte[] buf = new byte[16 * 1024];
+            final long flushIntervalNs = Math.max(0L, flushInterval.toNanos());
+            long lastFlushNs = System.nanoTime();
             int n;
             while ((n = srcIn.read(buf)) >= 0) {
                 if (n > 0) {
                     stats.addRaw(n);
                     zstdOut.write(buf, 0, n);
-                    zstdOut.flush();
+                    if (flushIntervalNs == 0L || (System.nanoTime() - lastFlushNs) >= flushIntervalNs) {
+                        zstdOut.flush();
+                        lastFlushNs = System.nanoTime();
+                    }
                 }
             }
+            zstdOut.flush();
         }
     }
 
@@ -391,49 +412,63 @@ final class ServerProxyRuntime {
                 Files.createDirectories(path.getParent());
                 String body = """
                     # ------------------------------------------------------------
-                    # zstdproxy server config (Forge mod, auto-generated)
+                    # zstdproxy 服务端配置（Forge 模组自动生成）
                     # ------------------------------------------------------------
-                    # IMPORTANT:
-                    # 1) Set enabled=true after checking listen/target.
-                    # 2) listen and target must NOT be the same endpoint.
-                    # 3) Do not use host with trailing dot, e.g. 127.0.0.1.
+                    # 重要说明：
+                    # 1) 确认 listen / target 后，再把 enabled 改为 true。
+                    # 2) listen 与 target 不能是同一个端点。
+                    # 3) 地址不要写成 127.0.0.1.（末尾带点会解析失败）。
                     # ------------------------------------------------------------
 
-                    # Enable built-in zstd proxy on dedicated server.
-                    # false = disabled (safe default), true = start proxy.
+                    # 是否启用内置 zstd 代理。
+                    # false = 关闭（默认安全值），true = 启动代理。
                     enabled=false
 
-                    # Public bind address for zstd clients to connect.
-                    # Usually 0.0.0.0:<public_port>.
+                    # zstd 客户端连接入口（公网监听地址）。
+                    # 通常为 0.0.0.0:<公网端口>。
                     listen=0.0.0.0:35566
 
-                    # Backend Minecraft/Velocity target.
-                    # Usually local backend, e.g. 127.0.0.1:25565.
+                    # 后端 Minecraft / Velocity 地址。
+                    # 通常为本机后端，如 127.0.0.1:25565。
                     target=127.0.0.1:${PORT}
 
-                    # Zstd compression level for backend -> client stream.
-                    # Range: 1..22, recommended: 3..9.
+                    # 后端 -> 客户端方向的 zstd 压缩等级。
+                    # 范围：1..22，推荐：3..9。
                     level=7
 
-                    # Flood guard: max concurrent connections per source IP.
-                    # Set <=0 to disable this limit.
+                    # 单个源 IP 最大并发连接数。
+                    # 设为 <=0 可关闭此限制。
                     max_conn_per_ip=20
 
-                    # Flood guard: max connection attempts per source IP in request_window.
-                    # Set <=0 to disable this limit.
+                    # 单个源 IP 在 request_window 内最大连接尝试次数。
+                    # 设为 <=0 可关闭此限制。
                     max_req_per_window=30
 
-                    # Flood guard request window.
-                    # Supported suffix: ms, s, m, h, d.
+                    # 限流时间窗口。
+                    # 支持后缀：ms, s, m, h, d。
                     request_window=10s
 
-                    # Ban duration after exceeding rate limit.
-                    # Supported suffix: ms, s, m, h, d.
+                    # 超限后的封禁时长。
+                    # 支持后缀：ms, s, m, h, d。
                     ban_duration=30m
 
-                    # Stats print interval.
-                    # Supported suffix: ms, s, m, h, d.
+                    # 统计日志输出间隔。
+                    # 支持后缀：ms, s, m, h, d。
                     stats_interval=1s
+
+                    # zstd flush 间隔：
+                    # 0ms = 每次写入都 flush（延迟低，峰值可能更大）
+                    # 建议 5~20ms 在延迟与带宽峰值之间折中
+                    flush_interval=8ms
+
+                    # 单连接限速（字节/秒），0 表示关闭
+                    max_rate_per_conn_bps=0
+
+                    # 全局总限速（字节/秒），0 表示关闭
+                    max_rate_global_bps=0
+
+                    # 令牌桶突发容量（字节），越大越允许瞬时突发
+                    burst_bytes=262144
                     """.replace("${PORT}", String.valueOf(mcServerPort > 0 ? mcServerPort : 25565));
                 Files.writeString(path, body, StandardCharsets.UTF_8);
                 LOGGER.warn("[zstdproxy-server] generated config: {}", path);
@@ -462,11 +497,41 @@ final class ServerProxyRuntime {
         Duration window = parseDuration(props.getProperty("request_window"), Duration.ofSeconds(10));
         Duration ban = parseDuration(props.getProperty("ban_duration"), Duration.ofMinutes(30));
         Duration statsInterval = parseDuration(props.getProperty("stats_interval"), Duration.ofSeconds(1));
+        Duration flushInterval = parseDuration(props.getProperty("flush_interval"), Duration.ofMillis(8));
+        long maxRatePerConnBps = parseLong(props.getProperty("max_rate_per_conn_bps"), 0L);
+        long maxRateGlobalBps = parseLong(props.getProperty("max_rate_global_bps"), 0L);
+        int burstBytes = parseInt(props.getProperty("burst_bytes"), 256 * 1024);
         if (statsInterval.isZero() || statsInterval.isNegative()) {
             statsInterval = Duration.ofSeconds(1);
         }
+        if (flushInterval.isNegative()) {
+            flushInterval = Duration.ZERO;
+        }
+        if (maxRatePerConnBps < 0) {
+            maxRatePerConnBps = 0L;
+        }
+        if (maxRateGlobalBps < 0) {
+            maxRateGlobalBps = 0L;
+        }
+        if (burstBytes <= 0) {
+            burstBytes = 256 * 1024;
+        }
 
-        return new ProxyConfig(enabled, listen, target, level, maxConn, maxReq, window, ban, statsInterval);
+        return new ProxyConfig(
+            enabled,
+            listen,
+            target,
+            level,
+            maxConn,
+            maxReq,
+            window,
+            ban,
+            statsInterval,
+            flushInterval,
+            maxRatePerConnBps,
+            maxRateGlobalBps,
+            burstBytes
+        );
     }
 
     private int parseInt(String raw, int fallback) {
@@ -475,6 +540,17 @@ final class ServerProxyRuntime {
         }
         try {
             return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private long parseLong(String raw, long fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(raw.trim());
         } catch (NumberFormatException e) {
             return fallback;
         }
@@ -565,7 +641,11 @@ final class ServerProxyRuntime {
         int maxReqPerWindow,
         Duration window,
         Duration banDuration,
-        Duration statsInterval
+        Duration statsInterval,
+        Duration flushInterval,
+        long maxRatePerConnBps,
+        long maxRateGlobalBps,
+        int burstBytes
     ) {
     }
 
@@ -745,6 +825,125 @@ final class ServerProxyRuntime {
         }
     }
 
+    private static final class TokenBucketLimiter {
+        private final double rateBps;
+        private final double capacity;
+        private double tokens;
+        private long lastNanos;
+
+        private TokenBucketLimiter(long rateBps, long burstBytes) {
+            this.rateBps = Math.max(1L, rateBps);
+            this.capacity = Math.max(1L, burstBytes);
+            this.tokens = this.capacity;
+            this.lastNanos = System.nanoTime();
+        }
+
+        static TokenBucketLimiter create(long rateBps, long burstBytes) {
+            if (rateBps <= 0) {
+                return null;
+            }
+            long burst = burstBytes > 0 ? burstBytes : rateBps;
+            return new TokenBucketLimiter(rateBps, burst);
+        }
+
+        void waitBytes(int bytes) {
+            if (bytes <= 0) {
+                return;
+            }
+
+            double remaining = bytes;
+            while (remaining > 0) {
+                double chunk = Math.min(remaining, capacity);
+                waitChunk(chunk);
+                remaining -= chunk;
+            }
+        }
+
+        private void waitChunk(double need) {
+            while (true) {
+                long sleepNanos;
+                synchronized (this) {
+                    long now = System.nanoTime();
+                    double elapsedSec = (now - lastNanos) / 1_000_000_000.0;
+                    if (elapsedSec > 0) {
+                        tokens = Math.min(capacity, tokens + elapsedSec * rateBps);
+                    }
+                    lastNanos = now;
+
+                    if (tokens >= need) {
+                        tokens -= need;
+                        return;
+                    }
+
+                    double shortage = need - tokens;
+                    sleepNanos = (long) Math.ceil((shortage / rateBps) * 1_000_000_000.0);
+                }
+
+                if (sleepNanos <= 0) {
+                    continue;
+                }
+
+                long sleepMillis = sleepNanos / 1_000_000L;
+                int nanosPart = (int) (sleepNanos % 1_000_000L);
+                try {
+                    Thread.sleep(sleepMillis, nanosPart);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    private static final class RateLimitedOutputStream extends OutputStream {
+        private static final int CHUNK_SIZE = 16 * 1024;
+
+        private final OutputStream delegate;
+        private final TokenBucketLimiter perConnLimiter;
+        private final TokenBucketLimiter globalLimiter;
+
+        private RateLimitedOutputStream(
+            OutputStream delegate,
+            TokenBucketLimiter perConnLimiter,
+            TokenBucketLimiter globalLimiter
+        ) {
+            this.delegate = Objects.requireNonNull(delegate);
+            this.perConnLimiter = perConnLimiter;
+            this.globalLimiter = globalLimiter;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            throttle(1);
+            delegate.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            int written = 0;
+            while (written < len) {
+                int chunk = Math.min(CHUNK_SIZE, len - written);
+                throttle(chunk);
+                delegate.write(b, off + written, chunk);
+                written += chunk;
+            }
+        }
+
+        @Override
+        public void flush() throws IOException {
+            delegate.flush();
+        }
+
+        private void throttle(int n) {
+            if (perConnLimiter != null) {
+                perConnLimiter.waitBytes(n);
+            }
+            if (globalLimiter != null) {
+                globalLimiter.waitBytes(n);
+            }
+        }
+    }
+
     @FunctionalInterface
     private interface Counter {
         void add(long n);
@@ -766,3 +965,4 @@ final class ServerProxyRuntime {
         }
     }
 }
+

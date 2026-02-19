@@ -39,6 +39,10 @@
 | `max_req_per_window=30` | 每个源 IP 在窗口期内最大请求次数 |
 | `ban_duration=30m` | 超限后封禁时长 |
 | `stats_interval=1s` | 统计日志输出间隔 |
+| `flush_interval=8ms` | zstd 刷新间隔（越小延迟越低，越大越平滑带宽峰值） |
+| `max_rate_per_conn_bps=0` | 单连接限速（字节/秒，0 为关闭） |
+| `max_rate_global_bps=0` | 全局总限速（字节/秒，0 为关闭） |
+| `burst_bytes=262144` | 令牌桶突发容量（字节，越大越允许瞬时突发） |
 
 注:如果窗口期和连接数设置不当,在客户端大量刷新MOTD的情况下有可能会被封，如使用FRP,haproxy等转发软件的,请打开proxyprotocolv2协议，否则IP获取不正确可能导致封禁整条线路
 ## 项目组成
@@ -116,6 +120,7 @@ go build .
 
 ## 独立服务端/客户端（跨平台）
 
+由于这个项目独立端并非我创建，我仅补全了macos版本，所以后续更新非特殊说明，否则默认只更新jar mod。
 以下命令适用于独立程序（`GoZstdServer*`）。
 独立服务端程序往往是和客户端的jar一起使用，服务器使用独立程序，客户端使用jar mod，这样可以自动生成服务器地址。
 由于这个工具的特性，它不仅可以代理MC，也可以代理使用tcp协议的其他游戏服务器。
@@ -161,6 +166,3 @@ chmod +x ./GoZstdServer-macos-arm64
 ## 许可证
 
 该项目采用MIT许可证授权。详情请参见LICENSE。
-
-
-

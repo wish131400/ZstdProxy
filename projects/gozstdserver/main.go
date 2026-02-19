@@ -36,6 +36,11 @@ type config struct {
 	BanDuration         time.Duration
 
 	Level int
+
+	FlushInterval     time.Duration
+	MaxRatePerConnBps int64
+	MaxRateGlobalBps  int64
+	BurstBytes        int64
 }
 
 type proxyInfo struct {
@@ -47,8 +52,8 @@ type proxyInfo struct {
 }
 
 type guardEntry struct {
-	Active     int
-	Requests   []time.Time
+	Active      int
+	Requests    []time.Time
 	BannedUntil time.Time
 }
 
@@ -124,9 +129,10 @@ func (g *floodGuard) end(ip string) {
 }
 
 type server struct {
-	cfg   config
-	guard *floodGuard
-	stats *trafficStats
+	cfg           config
+	guard         *floodGuard
+	stats         *trafficStats
+	globalLimiter *tokenBucket
 }
 
 type trafficStats struct {
@@ -181,6 +187,128 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+type tokenBucket struct {
+	mu       sync.Mutex
+	rateBps  float64
+	capacity float64
+	tokens   float64
+	last     time.Time
+}
+
+func newTokenBucket(rateBps, burstBytes int64) *tokenBucket {
+	if rateBps <= 0 {
+		return nil
+	}
+	if burstBytes <= 0 {
+		burstBytes = rateBps
+	}
+
+	now := time.Now()
+	capacity := float64(burstBytes)
+	return &tokenBucket{
+		rateBps:  float64(rateBps),
+		capacity: capacity,
+		tokens:   capacity,
+		last:     now,
+	}
+}
+
+func (tb *tokenBucket) waitN(n int) {
+	if tb == nil || n <= 0 {
+		return
+	}
+
+	remaining := float64(n)
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > tb.capacity {
+			chunk = tb.capacity
+		}
+		tb.waitChunk(chunk)
+		remaining -= chunk
+	}
+}
+
+func (tb *tokenBucket) waitChunk(need float64) {
+	for {
+		tb.mu.Lock()
+
+		now := time.Now()
+		elapsed := now.Sub(tb.last).Seconds()
+		if elapsed > 0 {
+			tb.tokens += elapsed * tb.rateBps
+			if tb.tokens > tb.capacity {
+				tb.tokens = tb.capacity
+			}
+		}
+		tb.last = now
+
+		if tb.tokens >= need {
+			tb.tokens -= need
+			tb.mu.Unlock()
+			return
+		}
+
+		shortage := need - tb.tokens
+		waitSeconds := shortage / tb.rateBps
+		tb.mu.Unlock()
+
+		if waitSeconds <= 0 {
+			continue
+		}
+		time.Sleep(time.Duration(waitSeconds * float64(time.Second)))
+	}
+}
+
+type rateLimitedWriter struct {
+	dst         io.Writer
+	perConn     *tokenBucket
+	global      *tokenBucket
+	maxChunkLen int
+}
+
+func newRateLimitedWriter(dst io.Writer, perConn, global *tokenBucket) io.Writer {
+	if perConn == nil && global == nil {
+		return dst
+	}
+	return &rateLimitedWriter{
+		dst:         dst,
+		perConn:     perConn,
+		global:      global,
+		maxChunkLen: 16 * 1024,
+	}
+}
+
+func (w *rateLimitedWriter) Write(p []byte) (int, error) {
+	written := 0
+	for written < len(p) {
+		end := written + w.maxChunkLen
+		if end > len(p) {
+			end = len(p)
+		}
+
+		chunk := p[written:end]
+		if w.perConn != nil {
+			w.perConn.waitN(len(chunk))
+		}
+		if w.global != nil {
+			w.global.waitN(len(chunk))
+		}
+
+		n, err := w.dst.Write(chunk)
+		if n > 0 {
+			written += n
+		}
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			return written, io.ErrShortWrite
+		}
+	}
+	return written, nil
+}
+
 func main() {
 	cfg := parseFlags()
 	if cfg.Mode != "server" {
@@ -188,9 +316,10 @@ func main() {
 	}
 
 	s := &server{
-		cfg:   cfg,
-		guard: newFloodGuard(cfg),
-		stats: &trafficStats{},
+		cfg:           cfg,
+		guard:         newFloodGuard(cfg),
+		stats:         &trafficStats{},
+		globalLimiter: newTokenBucket(cfg.MaxRateGlobalBps, cfg.BurstBytes),
 	}
 
 	if err := s.run(); err != nil {
@@ -211,7 +340,18 @@ func parseFlags() config {
 	flag.DurationVar(&cfg.BanDuration, "bd", 30*time.Minute, "Ban duration after rate limit exceeded (e.g. 30m)")
 
 	flag.IntVar(&cfg.Level, "level", 3, "Zstd compression level for MC->client direction")
+	flag.DurationVar(&cfg.FlushInterval, "flush", 8*time.Millisecond, "Flush interval for compressed stream (e.g. 0ms, 5ms, 20ms)")
+	flag.Int64Var(&cfg.MaxRatePerConnBps, "rpc", 0, "Max bytes/sec per connection on compressed output (0 disables)")
+	flag.Int64Var(&cfg.MaxRateGlobalBps, "rg", 0, "Max bytes/sec globally on compressed output (0 disables)")
+	flag.Int64Var(&cfg.BurstBytes, "burst", 256*1024, "Token bucket burst size in bytes for rate limits")
 	flag.Parse()
+
+	if cfg.FlushInterval < 0 {
+		cfg.FlushInterval = 0
+	}
+	if cfg.BurstBytes <= 0 {
+		cfg.BurstBytes = 256 * 1024
+	}
 
 	return cfg
 }
@@ -225,6 +365,7 @@ func (s *server) run() error {
 
 	log.Printf("GoZstdServer started: listen=%s target=%s mode=%s", s.cfg.Listen, s.cfg.Target, s.cfg.Mode)
 	log.Printf("guard: max_conn=%d max_req=%d window=%s ban=%s", s.cfg.MaxConnectionsPerIP, s.cfg.MaxRequests, s.cfg.WindowDuration, s.cfg.BanDuration)
+	log.Printf("tuning: flush=%s rate_per_conn=%dB/s rate_global=%dB/s burst=%dB", s.cfg.FlushInterval, s.cfg.MaxRatePerConnBps, s.cfg.MaxRateGlobalBps, s.cfg.BurstBytes)
 	stopStats := make(chan struct{})
 	defer close(stopStats)
 	go startStatsPrinter(stopStats, s.stats)
@@ -282,6 +423,7 @@ func (s *server) handleConn(clientConn net.Conn) {
 	defer targetConn.Close()
 
 	log.Printf("accepted source=%s remote=%s target=%s", sourceIP, remoteIP, s.cfg.Target)
+	perConnLimiter := newTokenBucket(s.cfg.MaxRatePerConnBps, s.cfg.BurstBytes)
 
 	errCh := make(chan error, 2)
 
@@ -291,7 +433,7 @@ func (s *server) handleConn(clientConn net.Conn) {
 	}()
 
 	go func() {
-		errCh <- forwardCompress(clientConn, targetConn, s.cfg.Level, s.stats)
+		errCh <- forwardCompress(clientConn, targetConn, s.cfg.Level, s.cfg.FlushInterval, s.stats, perConnLimiter, s.globalLimiter)
 		closeWrite(clientConn)
 	}()
 
@@ -397,13 +539,26 @@ func forwardDecompress(dst net.Conn, src io.Reader, stats *trafficStats) error {
 	}
 }
 
-func forwardCompress(dst io.Writer, src net.Conn, level int, stats *trafficStats) error {
+func forwardCompress(dst io.Writer, src net.Conn, level int, flushInterval time.Duration, stats *trafficStats, perConnLimiter, globalLimiter *tokenBucket) error {
 	encLevel := zstd.EncoderLevelFromZstd(level)
-	zw, err := zstd.NewWriter(&countingWriter{w: dst, cb: stats.addZstd}, zstd.WithEncoderLevel(encLevel))
+	limitedDst := newRateLimitedWriter(dst, perConnLimiter, globalLimiter)
+	zw, err := zstd.NewWriter(&countingWriter{w: limitedDst, cb: stats.addZstd}, zstd.WithEncoderLevel(encLevel))
 	if err != nil {
 		return err
 	}
 	defer zw.Close()
+
+	lastFlush := time.Now()
+	shouldFlush := func(force bool) error {
+		if flushInterval <= 0 {
+			return zw.Flush()
+		}
+		if force || time.Since(lastFlush) >= flushInterval {
+			lastFlush = time.Now()
+			return zw.Flush()
+		}
+		return nil
+	}
 
 	buf := make([]byte, 16*1024)
 	for {
@@ -413,12 +568,15 @@ func forwardCompress(dst io.Writer, src net.Conn, level int, stats *trafficStats
 			if _, err := zw.Write(buf[:n]); err != nil {
 				return err
 			}
-			if err := zw.Flush(); err != nil {
+			if err := shouldFlush(false); err != nil {
 				return err
 			}
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
+				if err := shouldFlush(true); err != nil {
+					return err
+				}
 				return nil
 			}
 			return readErr

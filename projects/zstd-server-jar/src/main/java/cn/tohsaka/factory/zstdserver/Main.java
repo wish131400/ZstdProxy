@@ -66,6 +66,7 @@ public final class Main {
 
         final TrafficStats stats = new TrafficStats();
         final FloodGuard guard = new FloodGuard(cfg);
+        final TokenBucketLimiter globalLimiter = TokenBucketLimiter.create(cfg.maxRateGlobalBps, cfg.burstBytes);
         final ExecutorService workers = Executors.newCachedThreadPool(new NamedFactory("zstdsrv-worker"));
         final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(new NamedFactory("zstdsrv-stats"));
 
@@ -81,6 +82,8 @@ public final class Main {
             System.out.printf("GoZstdServer started: listen=%s target=%s mode=server%n", listen, target);
             System.out.printf("guard: max_conn=%d max_req=%d window=%s ban=%s%n",
                 cfg.maxConnPerIp, cfg.maxReqPerWindow, cfg.window, cfg.banDuration);
+            System.out.printf("tuning: flush=%s rate_per_conn=%dB/s rate_global=%dB/s burst=%dB%n",
+                cfg.flushInterval, cfg.maxRatePerConnBps, cfg.maxRateGlobalBps, cfg.burstBytes);
 
             startStatsPrinter(stats, ticker, cfg.statsInterval);
 
@@ -96,7 +99,7 @@ public final class Main {
                     continue;
                 }
 
-                workers.execute(() -> handleClient(client, target, cfg, guard, stats, workers));
+                workers.execute(() -> handleClient(client, target, cfg, guard, stats, workers, globalLimiter));
             }
         } finally {
             shutdownQuietly(ticker);
@@ -110,7 +113,8 @@ public final class Main {
         AppConfig cfg,
         FloodGuard guard,
         TrafficStats stats,
-        ExecutorService workers
+        ExecutorService workers,
+        TokenBucketLimiter globalLimiter
     ) {
         stats.addConn(1);
         String remoteIp = sourceIp(client.getRemoteSocketAddress());
@@ -132,6 +136,7 @@ public final class Main {
                 upstream.connect(target.toAddress(), 5000);
                 upstream.setTcpNoDelay(true);
                 clientSocket.setTcpNoDelay(true);
+                TokenBucketLimiter perConnLimiter = TokenBucketLimiter.create(cfg.maxRatePerConnBps, cfg.burstBytes);
 
                 final String finalSourceIp = sourceIp;
                 Future<Exception> c2s = workers.submit(() -> {
@@ -147,7 +152,7 @@ public final class Main {
 
                 Future<Exception> s2c = workers.submit(() -> {
                     try {
-                        forwardCompress(clientSocket.getOutputStream(), upstream, cfg.level, stats);
+                        forwardCompress(clientSocket.getOutputStream(), upstream, cfg.level, cfg.flushInterval, stats, perConnLimiter, globalLimiter);
                         return null;
                     } catch (Exception ex) {
                         return ex;
@@ -191,19 +196,34 @@ public final class Main {
         }
     }
 
-    private static void forwardCompress(OutputStream dst, Socket src, int level, TrafficStats stats) throws IOException {
-        try (ZstdOutputStream zstdOut = new ZstdOutputStream(new CountingOutputStream(dst, stats::addZstd), level)) {
+    private static void forwardCompress(
+        OutputStream dst,
+        Socket src,
+        int level,
+        Duration flushInterval,
+        TrafficStats stats,
+        TokenBucketLimiter perConnLimiter,
+        TokenBucketLimiter globalLimiter
+    ) throws IOException {
+        OutputStream limitedDst = new RateLimitedOutputStream(dst, perConnLimiter, globalLimiter);
+        try (ZstdOutputStream zstdOut = new ZstdOutputStream(new CountingOutputStream(limitedDst, stats::addZstd), level)) {
             zstdOut.setCloseFrameOnFlush(false);
             InputStream srcIn = src.getInputStream();
             byte[] buf = new byte[16 * 1024];
+            final long flushIntervalNs = Math.max(0L, flushInterval.toNanos());
+            long lastFlushNs = System.nanoTime();
             int n;
             while ((n = srcIn.read(buf)) >= 0) {
                 if (n > 0) {
                     stats.addRaw(n);
                     zstdOut.write(buf, 0, n);
-                    zstdOut.flush();
+                    if (flushIntervalNs == 0L || (System.nanoTime() - lastFlushNs) >= flushIntervalNs) {
+                        zstdOut.flush();
+                        lastFlushNs = System.nanoTime();
+                    }
                 }
             }
+            zstdOut.flush();
         }
     }
 
@@ -382,16 +402,52 @@ public final class Main {
             Files.createDirectories(parent);
         }
         String body = """
-            # zstd server config
-            # edit target/listen for your environment, then restart
+            # ------------------------------------------------------------
+            # zstd 独立服务端配置（自动生成）
+            # ------------------------------------------------------------
+            # 使用说明：
+            # 1) 先确认 listen / target，再启动服务。
+            # 2) listen 与 target 不能是同一个端点。
+            # 3) 地址不要写成 127.0.0.1.（末尾带点会解析失败）。
+            # ------------------------------------------------------------
+
+            # zstd 代理监听地址（玩家/客户端连这里）
             listen=0.0.0.0:25570
+
+            # 后端 MC / Velocity 地址
             target=127.0.0.1:25565
+
+            # 压缩等级（1~22，推荐 3~9）
             level=7
+
+            # 单个源 IP 最大并发连接数（<=0 表示不限制）
             max_conn_per_ip=20
+
+            # 单个源 IP 在 request_window 内最大请求次数（<=0 表示不限制）
             max_req_per_window=30
+
+            # 请求窗口（支持 ms/s/m/h/d）
             request_window=10s
+
+            # 触发限流后的封禁时长（支持 ms/s/m/h/d）
             ban_duration=30m
+
+            # 统计日志输出间隔（支持 ms/s/m/h/d）
             stats_interval=1s
+
+            # zstd flush 间隔：
+            # 0ms = 每次写入都 flush（延迟低，峰值可能更大）
+            # 建议 5~20ms 在延迟与带宽峰值之间折中
+            flush_interval=8ms
+
+            # 单连接限速（字节/秒），0 表示关闭
+            max_rate_per_conn_bps=0
+
+            # 全局总限速（字节/秒），0 表示关闭
+            max_rate_global_bps=0
+
+            # 令牌桶突发容量（字节），越大越允许瞬时突发
+            burst_bytes=262144
             """;
         Files.writeString(configPath, body, StandardCharsets.UTF_8);
     }
@@ -474,6 +530,17 @@ public final class Main {
         }
     }
 
+    private static long parseLong(String raw, long fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
     private record ProxyInfo(boolean valid, String sourceIp, int sourcePort, String targetIp, int targetPort) {
         static ProxyInfo invalid() {
             return new ProxyInfo(false, null, 0, null, 0);
@@ -534,6 +601,125 @@ public final class Main {
         @Override
         public void flush() throws IOException {
             delegate.flush();
+        }
+    }
+
+    private static final class TokenBucketLimiter {
+        private final double rateBps;
+        private final double capacity;
+        private double tokens;
+        private long lastNanos;
+
+        private TokenBucketLimiter(long rateBps, long burstBytes) {
+            this.rateBps = Math.max(1L, rateBps);
+            this.capacity = Math.max(1L, burstBytes);
+            this.tokens = this.capacity;
+            this.lastNanos = System.nanoTime();
+        }
+
+        static TokenBucketLimiter create(long rateBps, long burstBytes) {
+            if (rateBps <= 0) {
+                return null;
+            }
+            long burst = burstBytes > 0 ? burstBytes : rateBps;
+            return new TokenBucketLimiter(rateBps, burst);
+        }
+
+        void waitBytes(int bytes) {
+            if (bytes <= 0) {
+                return;
+            }
+
+            double remaining = bytes;
+            while (remaining > 0) {
+                double chunk = Math.min(remaining, capacity);
+                waitChunk(chunk);
+                remaining -= chunk;
+            }
+        }
+
+        private void waitChunk(double need) {
+            while (true) {
+                long sleepNanos = 0L;
+                synchronized (this) {
+                    long now = System.nanoTime();
+                    double elapsedSec = (now - lastNanos) / 1_000_000_000.0;
+                    if (elapsedSec > 0) {
+                        tokens = Math.min(capacity, tokens + elapsedSec * rateBps);
+                    }
+                    lastNanos = now;
+
+                    if (tokens >= need) {
+                        tokens -= need;
+                        return;
+                    }
+
+                    double shortage = need - tokens;
+                    sleepNanos = (long) Math.ceil((shortage / rateBps) * 1_000_000_000.0);
+                }
+
+                if (sleepNanos <= 0L) {
+                    continue;
+                }
+
+                long sleepMillis = sleepNanos / 1_000_000L;
+                int nanosPart = (int) (sleepNanos % 1_000_000L);
+                try {
+                    Thread.sleep(sleepMillis, nanosPart);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    private static final class RateLimitedOutputStream extends OutputStream {
+        private static final int CHUNK_SIZE = 16 * 1024;
+
+        private final OutputStream delegate;
+        private final TokenBucketLimiter perConnLimiter;
+        private final TokenBucketLimiter globalLimiter;
+
+        private RateLimitedOutputStream(
+            OutputStream delegate,
+            TokenBucketLimiter perConnLimiter,
+            TokenBucketLimiter globalLimiter
+        ) {
+            this.delegate = Objects.requireNonNull(delegate);
+            this.perConnLimiter = perConnLimiter;
+            this.globalLimiter = globalLimiter;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            throttle(1);
+            delegate.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            int written = 0;
+            while (written < len) {
+                int chunk = Math.min(CHUNK_SIZE, len - written);
+                throttle(chunk);
+                delegate.write(b, off + written, chunk);
+                written += chunk;
+            }
+        }
+
+        @Override
+        public void flush() throws IOException {
+            delegate.flush();
+        }
+
+        private void throttle(int n) {
+            if (perConnLimiter != null) {
+                perConnLimiter.waitBytes(n);
+            }
+            if (globalLimiter != null) {
+                globalLimiter.waitBytes(n);
+            }
         }
     }
 
@@ -630,7 +816,11 @@ public final class Main {
         int maxReqPerWindow,
         Duration window,
         Duration banDuration,
-        Duration statsInterval
+        Duration statsInterval,
+        Duration flushInterval,
+        long maxRatePerConnBps,
+        long maxRateGlobalBps,
+        int burstBytes
     ) {
         static AppConfig load(Path path) throws IOException {
             Properties p = new Properties();
@@ -646,12 +836,28 @@ public final class Main {
             Duration window = parseDuration(p.getProperty("request_window"), Duration.ofSeconds(10));
             Duration ban = parseDuration(p.getProperty("ban_duration"), Duration.ofMinutes(30));
             Duration stats = parseDuration(p.getProperty("stats_interval"), Duration.ofSeconds(1));
+            Duration flush = parseDuration(p.getProperty("flush_interval"), Duration.ofMillis(8));
+            long ratePerConn = parseLong(p.getProperty("max_rate_per_conn_bps"), 0L);
+            long rateGlobal = parseLong(p.getProperty("max_rate_global_bps"), 0L);
+            int burstBytes = parseInt(p.getProperty("burst_bytes"), 256 * 1024);
 
             level = Math.max(1, Math.min(22, level));
             if (stats.isNegative() || stats.isZero()) {
                 stats = Duration.ofSeconds(1);
             }
-            return new AppConfig(listen, target, level, maxConn, maxReq, window, ban, stats);
+            if (flush.isNegative()) {
+                flush = Duration.ZERO;
+            }
+            if (ratePerConn < 0) {
+                ratePerConn = 0;
+            }
+            if (rateGlobal < 0) {
+                rateGlobal = 0;
+            }
+            if (burstBytes <= 0) {
+                burstBytes = 256 * 1024;
+            }
+            return new AppConfig(listen, target, level, maxConn, maxReq, window, ban, stats, flush, ratePerConn, rateGlobal, burstBytes);
         }
     }
 
