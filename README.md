@@ -12,6 +12,8 @@
 
 ## 第一次使用
 
+在使用之前，请确保服务器的正版验证（online-mode=false）已经关闭，并且网络压缩阈值（network-compression-threshold=1048576）调整到合适数值
+
 ### 版本选用
 
 如果你的客户端/服务器有[DH]Distant Horizons，那么请使用DHFIX版本，如果没有，请使用All版本，由于本模组和[DH]Distant Horizons使用了相同的依赖库，在加载时会导致崩溃。
